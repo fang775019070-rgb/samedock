@@ -1,0 +1,428 @@
+import XCTest
+@testable import EchoDock
+
+final class DockPointerSchedulingTests: XCTestCase {
+    func testBottomScreenEdgeProjectsIntoFloatingDockInteraction() {
+        let displayFrame = CGRect(x: 0, y: 0, width: 1_440, height: 900)
+        let panelFrame = CGRect(x: 500, y: 6, width: 440, height: 80)
+
+        XCTAssertEqual(
+            DockBottomInteractionGeometry.normalizedLocation(
+                CGPoint(x: 720, y: 0),
+                displayFrame: displayFrame,
+                panelFrame: panelFrame
+            ),
+            CGPoint(x: 720, y: 6)
+        )
+        XCTAssertEqual(
+            DockBottomInteractionGeometry.normalizedLocation(
+                CGPoint(x: 400, y: 0),
+                displayFrame: displayFrame,
+                panelFrame: panelFrame
+            ),
+            CGPoint(x: 400, y: 6)
+        )
+        XCTAssertEqual(
+            DockBottomInteractionGeometry.normalizedLocation(
+                CGPoint(x: -1, y: 0),
+                displayFrame: displayFrame,
+                panelFrame: panelFrame
+            ),
+            CGPoint(x: -1, y: 0)
+        )
+    }
+
+    func testBottomScreenEdgeProjectsOutsideTheDockIconSpan() {
+        let displayFrame = CGRect(x: 0, y: 0, width: 1_440, height: 900)
+        let panelFrame = CGRect(x: 500, y: 6, width: 440, height: 80)
+
+        XCTAssertEqual(
+            DockBottomInteractionGeometry.normalizedLocation(
+                CGPoint(x: 80, y: 0),
+                displayFrame: displayFrame,
+                panelFrame: panelFrame
+            ),
+            CGPoint(x: 80, y: 6)
+        )
+        XCTAssertTrue(
+            DockBottomInteractionGeometry.containsBottomEdgeHotZone(
+                CGPoint(x: 80, y: 3),
+                displayFrame: displayFrame
+            )
+        )
+    }
+
+    func testVisibleHoldRegionCoversOnlyTheBottomStripAcrossTheDisplay() {
+        let displayFrame = CGRect(x: 1_440, y: -900, width: 1_920, height: 900)
+        let panelFrame = CGRect(x: 2_000, y: -894, width: 400, height: 72)
+        let region = DockBottomInteractionGeometry.visibleHoldRegion(
+            panelFrame: panelFrame,
+            displayFrame: displayFrame
+        )
+
+        XCTAssertEqual(region.minX, displayFrame.minX)
+        XCTAssertEqual(region.maxX, displayFrame.maxX)
+        XCTAssertEqual(region.minY, displayFrame.minY)
+        XCTAssertTrue(region.contains(CGPoint(x: displayFrame.minX + 1, y: -899)))
+        XCTAssertFalse(region.contains(CGPoint(x: displayFrame.minX + 1, y: -700)))
+    }
+
+    func testVisibleDockHoldRegionReachesThePhysicalScreenBottom() {
+        let region = DockBottomInteractionGeometry.visibleHoldRegion(
+            panelFrame: CGRect(x: 500, y: 6, width: 440, height: 80),
+            displayFrame: CGRect(x: 0, y: 0, width: 1_440, height: 900)
+        )
+
+        XCTAssertEqual(region.minY, 0)
+        XCTAssertTrue(region.contains(CGPoint(x: 720, y: 0)))
+    }
+
+    func testPrimaryShortPressActivatesOnlyWhenReleasedInside() {
+        XCTAssertEqual(
+            DockPrimaryPressPolicy.action(
+                eventType: .leftMouseUp,
+                elapsed: DockPrimaryPressPolicy.minimumPressDuration - 0.01,
+                movementToleranceExceeded: false,
+                isPointerInside: true,
+                supportsFileDrag: false
+            ),
+            .activate
+        )
+        XCTAssertEqual(
+            DockPrimaryPressPolicy.action(
+                eventType: .leftMouseUp,
+                elapsed: DockPrimaryPressPolicy.minimumPressDuration - 0.01,
+                movementToleranceExceeded: false,
+                isPointerInside: false,
+                supportsFileDrag: false
+            ),
+            .cancel
+        )
+    }
+
+    func testStationaryPrimaryPressPresentsContextMenuAtThreshold() {
+        XCTAssertEqual(
+            DockPrimaryPressPolicy.action(
+                eventType: nil,
+                elapsed: DockPrimaryPressPolicy.minimumPressDuration - 0.01,
+                movementToleranceExceeded: false,
+                isPointerInside: true,
+                supportsFileDrag: false
+            ),
+            .continueTracking
+        )
+        XCTAssertEqual(
+            DockPrimaryPressPolicy.action(
+                eventType: nil,
+                elapsed: DockPrimaryPressPolicy.minimumPressDuration,
+                movementToleranceExceeded: false,
+                isPointerInside: true,
+                supportsFileDrag: false
+            ),
+            .presentContextMenu
+        )
+    }
+
+    func testLongPressWinsOverMouseUpDeliveredAfterThreshold() {
+        XCTAssertEqual(
+            DockPrimaryPressPolicy.action(
+                eventType: .leftMouseUp,
+                elapsed: DockPrimaryPressPolicy.minimumPressDuration + 0.01,
+                movementToleranceExceeded: false,
+                isPointerInside: true,
+                supportsFileDrag: false
+            ),
+            .presentContextMenu
+        )
+    }
+
+    func testShortcutMovementStartsDragBeforeLongPress() {
+        for eventType: NSEvent.EventType in [.leftMouseDragged, .mouseMoved] {
+            XCTAssertEqual(
+                DockPrimaryPressPolicy.action(
+                    eventType: eventType,
+                    elapsed: DockPrimaryPressPolicy.minimumPressDuration + 0.1,
+                    movementToleranceExceeded: true,
+                    isPointerInside: true,
+                    supportsFileDrag: true
+                ),
+                .beginFileDrag
+            )
+        }
+        XCTAssertEqual(
+            DockPrimaryPressPolicy.action(
+                eventType: .leftMouseDragged,
+                elapsed: DockPrimaryPressPolicy.minimumPressDuration + 0.1,
+                movementToleranceExceeded: true,
+                isPointerInside: true,
+                supportsFileDrag: false
+            ),
+            .continueTracking
+        )
+    }
+
+    func testLongPressMenuAndFallbackDragKeepPrimaryMouseEventFamily() {
+        XCTAssertEqual(
+            DockPrimaryPressPolicy.contextMenuEventType(for: .leftMouseDown),
+            .leftMouseDown
+        )
+        XCTAssertEqual(
+            DockPrimaryPressPolicy.contextMenuEventType(for: .rightMouseDown),
+            .rightMouseDown
+        )
+        XCTAssertEqual(
+            DockPrimaryPressPolicy.fileDragEventType(for: .mouseMoved),
+            .leftMouseDragged
+        )
+        XCTAssertEqual(
+            DockPrimaryPressPolicy.fileDragEventType(for: .leftMouseDragged),
+            .leftMouseDragged
+        )
+    }
+
+    func testMovementToleranceIsInclusiveAndCancelsLongPress() {
+        let start = NSPoint(x: 10, y: 10)
+        XCTAssertFalse(DockPrimaryPressPolicy.exceededMovementTolerance(
+            from: start,
+            to: NSPoint(x: 13.99, y: 10)
+        ))
+        XCTAssertTrue(DockPrimaryPressPolicy.exceededMovementTolerance(
+            from: start,
+            to: NSPoint(x: 14, y: 10)
+        ))
+        XCTAssertEqual(
+            DockPrimaryPressPolicy.action(
+                eventType: nil,
+                elapsed: DockPrimaryPressPolicy.minimumPressDuration,
+                movementToleranceExceeded: true,
+                isPointerInside: true,
+                supportsFileDrag: false
+            ),
+            .continueTracking
+        )
+    }
+
+    func testTrackingAreaIsReadOnlyForEntryAndExitEvents() {
+        XCTAssertTrue(DockTrackingAreaEventPolicy.carriesTrackingArea(.mouseEntered))
+        XCTAssertTrue(DockTrackingAreaEventPolicy.carriesTrackingArea(.mouseExited))
+        XCTAssertFalse(DockTrackingAreaEventPolicy.carriesTrackingArea(.mouseMoved))
+        XCTAssertFalse(DockTrackingAreaEventPolicy.carriesTrackingArea(.leftMouseDragged))
+    }
+
+    func testTrackingExitKeepsMagnificationWhileMouseButtonIsPressed() {
+        XCTAssertFalse(DockPointerExitPolicy.shouldCancelInteraction(
+            pressedMouseButtons: 1
+        ))
+        XCTAssertFalse(DockPointerExitPolicy.shouldCancelInteraction(
+            pressedMouseButtons: 1 << 2
+        ))
+        XCTAssertTrue(DockPointerExitPolicy.shouldCancelInteraction(
+            pressedMouseButtons: 0
+        ))
+    }
+
+    func testPointerSequenceRejectsDuplicateAndOutOfOrderEvents() {
+        var sequence = DockPointerSampleSequence()
+
+        XCTAssertTrue(sequence.accept(10))
+        XCTAssertFalse(sequence.accept(10))
+        XCTAssertFalse(sequence.accept(9.99))
+        XCTAssertTrue(sequence.accept(10.01))
+    }
+
+    func testPointerSequenceRejectsNonFiniteTimestamp() {
+        var sequence = DockPointerSampleSequence()
+
+        XCTAssertFalse(sequence.accept(.infinity))
+        XCTAssertNil(sequence.lastAcceptedTimestamp)
+    }
+
+    func testFrameClockStaysWarmDuringContinuousPointerMovement() {
+        let lastRequest = 100.0
+
+        XCTAssertTrue(DockMagnificationFrameClockPolicy.keepsClockWarm(
+            isPointerInside: true,
+            lastPointerRequestTime: lastRequest,
+            now: lastRequest + DockMagnificationFrameClockPolicy.pointerIdleGrace / 2
+        ))
+    }
+
+    func testFrameClockStopsAfterIdleGraceOrPointerExit() {
+        let lastRequest = 100.0
+        let idleTime = lastRequest
+            + DockMagnificationFrameClockPolicy.pointerIdleGrace
+            + 0.001
+
+        XCTAssertFalse(DockMagnificationFrameClockPolicy.keepsClockWarm(
+            isPointerInside: true,
+            lastPointerRequestTime: lastRequest,
+            now: idleTime
+        ))
+        XCTAssertFalse(DockMagnificationFrameClockPolicy.keepsClockWarm(
+            isPointerInside: false,
+            lastPointerRequestTime: lastRequest,
+            now: lastRequest + 0.001
+        ))
+    }
+
+    func testButtonPresentationKeepsViewFrameStableWhileVisualSlotMoves() {
+        let baseFrame = NSRect(x: 100, y: 0, width: 54, height: 72)
+        let leftVisualFrame = NSRect(x: 86, y: 0, width: 62, height: 72)
+        let rightVisualFrame = NSRect(x: 118, y: 0, width: 64, height: 72)
+
+        let left = DockButtonPresentationGeometry.make(
+            baseFrame: baseFrame,
+            visualFrame: leftVisualFrame
+        )
+        let right = DockButtonPresentationGeometry.make(
+            baseFrame: baseFrame,
+            visualFrame: rightVisualFrame
+        )
+
+        XCTAssertEqual(left.viewFrame, baseFrame)
+        XCTAssertEqual(right.viewFrame, baseFrame)
+        XCTAssertEqual(
+            baseFrame.midX + left.visualSlotCenterOffsetX,
+            leftVisualFrame.midX,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            baseFrame.midX + right.visualSlotCenterOffsetX,
+            rightVisualFrame.midX,
+            accuracy: 0.0001
+        )
+    }
+
+    @MainActor
+    func testMagnifiedButtonAcceptsVisibleIconOutsideStableViewFrame() {
+        let button = DockItemButton(
+            frame: NSRect(x: 0, y: 0, width: 54, height: 72)
+        )
+        button.setPresentation(
+            magnification: 1.8,
+            presenceProgress: 1,
+            visualSlotCenterOffsetX: 18,
+            visualSlotWidth: 86
+        )
+        let iconFrame = button.iconFrame(in: button)
+        let edgePoints = [
+            NSPoint(x: iconFrame.minX + 0.5, y: iconFrame.midY),
+            NSPoint(x: iconFrame.maxX - 0.5, y: iconFrame.midY),
+            NSPoint(x: iconFrame.midX, y: iconFrame.minY + 0.5),
+            NSPoint(x: iconFrame.midX, y: iconFrame.maxY - 0.5)
+        ]
+        let overflowPoints = edgePoints.filter {
+            !button.bounds.contains($0)
+        }
+
+        XCTAssertGreaterThanOrEqual(overflowPoints.count, 2)
+        for point in overflowPoints {
+            XCTAssertTrue(button.containsInteractionPoint(point))
+            XCTAssertTrue(button.hitTest(point) === button)
+        }
+    }
+
+    func testVisualButtonHitResolverPrefersTheTopmostMagnifiedIcon() {
+        let overlappingPoint = NSPoint(x: 80, y: 60)
+        let targets = [
+            DockVisualButtonHitTarget(
+                buttonIndex: 0,
+                frame: NSRect(x: 20, y: 8, width: 64, height: 64),
+                zPosition: 1.2
+            ),
+            DockVisualButtonHitTarget(
+                buttonIndex: 1,
+                frame: NSRect(x: 36, y: 4, width: 88, height: 88),
+                zPosition: 1.8
+            )
+        ]
+
+        XCTAssertEqual(
+            DockVisualButtonHitResolver.buttonIndex(
+                at: overlappingPoint,
+                targets: targets
+            ),
+            1
+        )
+    }
+
+    func testMagnificationKeepsPointerInTheSameLogicalButtonSlot() {
+        let baseLayout = DockMagnificationLayout.make(
+            itemCount: 6,
+            pinnedItemCount: 2,
+            iconSize: 48,
+            spacing: 6,
+            maximumScale: 1.5,
+            influenceRange: 3,
+            containerWidth: 620,
+            height: 80,
+            pointerX: nil
+        )
+
+        for progress in [CGFloat(0.2), 0.65, 1] {
+            for (index, baseFrame) in baseLayout.baseButtonFrames.enumerated() {
+                for fraction in [CGFloat(0.05), 0.5, 0.95] {
+                    let pointerX = baseFrame.minX + baseFrame.width * fraction
+                    let magnifiedLayout = DockMagnificationLayout.make(
+                        itemCount: 6,
+                        pinnedItemCount: 2,
+                        iconSize: 48,
+                        spacing: 6,
+                        maximumScale: 1.5,
+                        influenceRange: 3,
+                        containerWidth: 620,
+                        height: 80,
+                        pointerX: pointerX,
+                        magnificationProgress: progress
+                    )
+
+                    XCTAssertTrue(
+                        magnifiedLayout.buttonFrames[index].contains(
+                            NSPoint(x: pointerX, y: 40)
+                        ),
+                        "pointer escaped logical slot \(index) at progress \(progress)"
+                    )
+                }
+            }
+        }
+    }
+
+    func testMagnificationExpandsTheDynamicBackgroundContentFrame() {
+        let idleLayout = DockMagnificationLayout.make(
+            itemCount: 6,
+            pinnedItemCount: 2,
+            iconSize: 48,
+            spacing: 6,
+            maximumScale: 1.5,
+            influenceRange: 3,
+            containerWidth: 620,
+            height: 80,
+            pointerX: nil
+        )
+        let pointerX = idleLayout.baseButtonFrames[2].midX
+        let magnifiedLayout = DockMagnificationLayout.make(
+            itemCount: 6,
+            pinnedItemCount: 2,
+            iconSize: 48,
+            spacing: 6,
+            maximumScale: 1.5,
+            influenceRange: 3,
+            containerWidth: 620,
+            height: 80,
+            pointerX: pointerX
+        )
+
+        XCTAssertGreaterThan(
+            magnifiedLayout.visualContentFrame.width,
+            idleLayout.visualContentFrame.width
+        )
+        XCTAssertNotEqual(
+            magnifiedLayout.visualContentFrame,
+            idleLayout.visualContentFrame
+        )
+        XCTAssertEqual(
+            magnifiedLayout.restingVisualContentFrame,
+            idleLayout.restingVisualContentFrame
+        )
+    }
+}

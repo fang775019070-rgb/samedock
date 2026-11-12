@@ -1,0 +1,42 @@
+.DS_Store
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+
+# Build products
+DerivedData/
+build/
+*.hmap
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# Swift Package Manager
+.build*/
+.swiftpm/xcode/package.xcworkspace/xcuserdata/
+
+# Local installation / verification output; keep source history lightweight.
+*.app/
+*.log
+/release-artifacts/
+__pycache__/
+
+# Never commit signing material or secrets.
+SameDockSigning/
+*.p12
+*.pfx
+*.cer
+*.pem
+*.key
+*.keychain
+*.keychain-db
+*.mobileprovision
+.env
+.env.*
+*.secret
+*secret*.json
+outputs/
+releases/
